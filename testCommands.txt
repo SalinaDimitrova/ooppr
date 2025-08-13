@@ -1,0 +1,33 @@
+Компилация:
+g++ -std=c++17 -Wall -Wextra -o MiniDB main.cpp Table/Table.cpp Row/Row.cpp Column/Column.cpp Database/Database.cpp Cells/IntCell/IntCell.cpp Cells/DoubleCell/DoubleCell.cpp Cells/StringCell/StringCell.cpp Cells/DateCell/DateCell.cpp Cells/DateCell/Date.cpp Cells/NullCell/NullCell.cpp Cells/CellFactory/CellFactory.cpp
+
+./Minidb
+
+addtable users
+addcolumn users id int
+addcolumn users name string
+addcolumn users dob date
+addcolumn users email string
+describe users
+
+insert users 1 Georgi 2000-02-03 g@example.com
+insert users 2 Ivan 1995-05-10 i@example.com
+insert users 3 Alexander 1998-12-21 a@example.com
+print users
+
+select 1 Ivan users
+update users 1 Ivan 1 Todor
+print users
+
+delete users 1 "Alexander"
+addcolumn users status string
+print users
+
+modify users 0 string
+describe users
+
+export users exported_users.csv
+saveas demo_save.txt
+close
+open demo_save.txt
+print users
