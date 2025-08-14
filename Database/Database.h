@@ -19,7 +19,6 @@ public:
     void load(const std::string& filename); 
     void save(const std::string& filename) const;
 
-
 private:
     std::vector<Table> tables;
 

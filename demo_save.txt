@@ -1,0 +1,4 @@
+TABLE users
+COLUMNS id:int name:string dob:date
+ROW 1 "Georgi" 2000-02-03
+END

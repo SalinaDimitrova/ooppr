@@ -1,4 +1,5 @@
 #include "Row.h"
+
 #include <string>
 
 Row::Row(const std::vector<Cell*>& data) 

@@ -4,6 +4,20 @@
 
 #include "Table.h"
 
+static std::string lowerCopy(const std::string& s) 
+{
+    std::string r;
+    r.reserve(s.size());
+    for (char ch : s) 
+    {
+        if (ch >= 'A' && ch <= 'Z') 
+            r.push_back(char(ch + ('a' - 'A')));
+        else                        
+            r.push_back(ch);
+    }
+    return r;
+}
+
 Table::Table(const std::string& name) : name(name) {}
 
 void Table::insertRow(const std::vector<Cell*>& data) 
@@ -14,30 +28,24 @@ void Table::insertRow(const std::vector<Cell*>& data)
     rows.emplace_back(data);
 }
 
-void Table::insertRowFromStrings(const std::vector<std::string>& values) 
-{
+void Table::insertRowFromStrings(const std::vector<std::string>& values) {
     if (values.size() != columns.size())
         throw std::invalid_argument("Row does not match number of columns!");
 
     std::vector<Cell*> rowData;
-
-    try
+    try 
     {
-        for (size_t i = 0; i < values.size(); ++i) 
+        for(size_t i = 0; i < values.size(); ++i) 
         {
-            const std::string& colType = columns[i].getType();
-            rowData.push_back(createCellFromString(values[i], colType, true));
+            CellType ct = columns[i].getType();
+            rowData.push_back(createCellFromString(values[i], ct, /*strict=*/false));
         }
-
-        rows.emplace_back(rowData);  
-    } 
-    catch (...) 
+        rows.emplace_back(rowData);
+    } catch (...) 
     {
-        for (size_t i = 0; i < rowData.size(); ++i)
-        {
-            delete rowData[i];
-        }
-        throw;  
+        for (Cell* c : rowData) 
+            delete c;
+        throw;
     }
 }
 
@@ -58,98 +66,109 @@ void Table::print() const
 
 void Table::describe() const 
 {
-    for (size_t i = 0; i < columns.size(); ++i) 
+    if (columns.empty()) 
     {
-        const Column& col = columns[i];
-        std::cout << col.getName() << ": " << col.getType() << std::endl;
+        std::cout << "(no columns)\n";
+        return;
+    }
+
+    for (const Column& col : columns) 
+    {
+        std::cout << col.getName() << ": "
+                  << Column::typeToString(col.getType()) << '\n';
     }
 }
 
-void Table::select(size_t columnIndex, const std::string& value) const 
+void Table::select(size_t columnIndex, const std::string& value,
+                   size_t limit, size_t offset) const
 {
     if (columnIndex >= columns.size())
         throw std::invalid_argument("Invalid column index!");
 
-    const std::string& columnType = columns[columnIndex].getType();
+    CellType colType = columns[columnIndex].getType();
     std::string valToMatch = value;
 
-    if (columnType == "string" && valToMatch.length() >= 2 && valToMatch.front() == '"' && valToMatch.back() == '"') 
-        valToMatch = valToMatch.substr(1, valToMatch.length() - 2);
+    if (colType == CellType::STRING &&
+        valToMatch.size() >= 2 && valToMatch.front() == '"' && valToMatch.back() == '"') 
+    {
+        valToMatch = valToMatch.substr(1, valToMatch.size() - 2);
+    }
 
     for (size_t i = 0; i < columns.size(); ++i) 
     {
         if (i > 0) std::cout << " | ";
         std::cout << columns[i].getName();
     }
-    std::cout << std::endl;
+    std::cout << '\n';
 
-    for (size_t rowIndex = 0; rowIndex < rows.size(); ++rowIndex) 
-    {
-        const Row& row = rows[rowIndex];
-        const std::vector<Cell*>& cells = row.getCells();
+    size_t seen = 0, printed = 0;
 
-        if (columnIndex >= cells.size() || cells[columnIndex] == nullptr)
+    for (const Row& row : rows) {
+        if (columnIndex >= row.size()) 
+            continue;
+        const Cell* c = row.cellAt(columnIndex);
+        if (!c) 
             continue;
 
-        std::string cellVal = cells[columnIndex]->toString();
-
+        bool match = false;
         if (value == "NULL") 
         {
-            if (cells[columnIndex]->getType() == CellType::NULLTYPE)
-                std::cout << row.toString() << std::endl;
-        } else if (columnType == "string") 
+            match = (c->getType() == CellType::NULLTYPE);
+        } else if (colType == CellType::STRING) 
         {
-            std::string searchLower = toLower(valToMatch);
-            std::string cellLower = toLower(cellVal);
-            if (cellLower.find(searchLower) != std::string::npos)
-                std::cout << row.toString() << std::endl;
-        } else 
+                std::string hay = lowerCopy(c->toString());
+                std::string needle = lowerCopy(valToMatch);
+                match = (hay.find(needle) != std::string::npos);
+        }
+        else 
+            match = (c->toString() == valToMatch);
+
+        if (match) 
         {
-            if (cellVal == valToMatch)
-                std::cout << row.toString() << std::endl;
+            if (seen++ < offset) continue;
+            if (printed >= limit) break;
+            std::cout << row.toString() << '\n';
+            ++printed;
         }
     }
 }
 
-void Table::modifyColumn(size_t columnIndex, const std::string& newType) 
+void Table::modifyColumn(std::size_t columnIndex, const std::string& newTypeStr)
+{
+    modifyColumn(columnIndex, Column::typeFromString(newTypeStr));
+}
+
+void Table::modifyColumn(std::size_t columnIndex, CellType newType)
 {
     if (columnIndex >= columns.size())
         throw std::invalid_argument("Invalid column index!");
 
-    size_t success = 0;
-    size_t failure = 0;
+    std::size_t success = 0, failure = 0;
 
-    for (std::size_t i = 0; i < rows.size(); ++i) 
+    for (Row& row : rows)
     {
-        Row& row = rows[i];
-        std::vector<Cell*>& cells = row.getCells();
-
-        Cell* oldCell = cells[columnIndex];
-        std::string oldString = oldCell ? oldCell->toString() : "NULL";
+        const Cell* oldCell = row.cellAt(columnIndex);
+        const std::string oldString = oldCell ? oldCell->toString() : "NULL";
 
         Cell* newCell = nullptr;
-
         try 
         {
-            newCell = createCellFromString(oldString, newType, false); 
+            newCell = createCellFromString(oldString, newType, /*strictStringParsing=*/false);
             ++success;
-        } 
-        catch (...) 
-        {
+        } catch (...) {
             newCell = new NullCell();
             ++failure;
         }
-
-        delete oldCell;
-        cells[columnIndex] = newCell;
+        row.replaceCell(columnIndex, newCell);
     }
 
     columns[columnIndex].setType(newType);
-    std::cout << "Modified column to type '" << newType << "'." << std::endl;
-    std::cout << "Successfully converted " << success << " cells." << std::endl;
-    std::cout << "Failed to convert " << failure << " cells (set to NULL)." << std::endl;
-}
 
+    std::cout << "Modified column to type '"
+              << Column::typeToString(newType) << "'.\n"
+              << "Successfully converted " << success << " cells.\n"
+              << "Failed to convert " << failure << " cells (set to NULL).\n";
+}
 
 void Table::update(size_t searchCol, const std::string& searchVal,
                    size_t targetCol, const std::string& newVal) 
@@ -157,12 +176,12 @@ void Table::update(size_t searchCol, const std::string& searchVal,
     if (searchCol >= columns.size() || targetCol >= columns.size())
         throw std::invalid_argument("Invalid column index!");
 
-    const std::string& targetType = columns[targetCol].getType();
-    Cell* prototype = nullptr;
+    CellType targetType = columns[targetCol].getType();
 
+    Cell* prototype = nullptr;
     try 
     {
-        prototype = createCellFromString(newVal, targetType);
+        prototype = createCellFromString(newVal, targetType, false);
     } catch (...) 
     {
         throw std::invalid_argument("Invalid new value!");
@@ -173,79 +192,83 @@ void Table::update(size_t searchCol, const std::string& searchVal,
     for (size_t i = 0; i < rows.size(); ++i) 
     {
         Row& row = rows[i];
-        std::vector<Cell*>& cells = row.getCells();
+        if (searchCol >= row.size() || targetCol >= row.size())
+            continue;
 
+        Cell* sc = row.cellAt(searchCol);
         bool match = false;
+
         if (searchVal == "NULL") 
-            match = (cells[searchCol]->getType() == CellType::NULLTYPE);
-        else 
-            match = (cells[searchCol]->toString() == searchVal);
+            match = (sc->getType() == CellType::NULLTYPE);
+        else                    
+            match = (sc->toString() == searchVal);
 
         if (match) 
         {
-            Cell* newCell = nullptr;
             try 
             {
-                newCell = prototype->clone(); 
-                delete cells[targetCol];      
-                cells[targetCol] = newCell;  
+                Cell* newCell = prototype->clone();
+                row.replaceCell(targetCol, newCell);
                 ++updated;
             } catch (...) 
             {
-                std::cout << "Memory error while updating row " << i << "." << std::endl;
+                std::cout << "Memory error while updating row " << i << ".\n";
                 continue;
             }
         }
     }
-    delete prototype;  
-    std::cout << "Updated " << updated << " row(s)." << std::endl;
+    delete prototype;
+    std::cout << "Updated " << updated << " row(s).\n";
 }
 
 void Table::deleteRows(size_t columnIndex, const std::string& value) 
 {
-    if (columnIndex >= columns.size()) 
+    if (columnIndex >= columns.size())
         throw std::invalid_argument("Invalid column index!");
 
     size_t removed = 0;
-    std::vector<Row> newRows;
+    std::vector<Row> kept;
 
-    for (size_t i = 0; i < rows.size(); ++i) 
-    {
-        Row& row = rows[i];
-        std::vector<Cell*>& cells = row.getCells();
+    kept.reserve(rows.size());
 
+    for (Row& row : rows) {
+        if (columnIndex >= row.size()) 
+        {
+            kept.push_back(row); 
+            continue;
+        }
+            
+        Cell* c = row.cellAt(columnIndex);
         bool shouldDelete = false;
+
         if (value == "NULL") 
-            shouldDelete = (cells[columnIndex]->getType() == CellType::NULLTYPE);
-        else 
-            shouldDelete = (cells[columnIndex]->toString() == value);
+            shouldDelete = (c->getType() == CellType::NULLTYPE);
+        else                 
+            shouldDelete = (c->toString() == value);
 
         if (shouldDelete) 
             ++removed;
-        else 
-            newRows.push_back(row);
+        else              
+            kept.push_back(row); 
     }
-    rows = newRows;
-    std::cout << "Deleted " << removed << " row(s)." << std::endl;
+    rows = std::move(kept);
+    std::cout << "Deleted " << removed << " row(s).\n";
 }
 
-void Table::addColumn(const std::string& name, const std::string& type) 
+void Table::addColumn(const std::string& name, const std::string& typeStr) 
 {
-    for (size_t i = 0; i < columns.size(); ++i) 
+    for (const Column& col : columns) 
     {
-        const Column& col = columns[i];
-        if (col.getName() == name) 
+        if (col.getName() == name)
             throw std::invalid_argument("Column with name '" + name + "' already exists.");
     }
-    columns.emplace_back(name, type);
+    columns.emplace_back(name, Column::typeFromString(typeStr));
 
-    for (size_t i = 0; i < rows.size(); ++i) 
-    {
-        Row& row = rows[i];
-        row.getCells().push_back(new NullCell());
-    }
+    for (Row& row : rows) 
+        row.appendNull();
 
-    std::cout << "Column '" << name << "' added with type '" << type << "'." << std::endl;
+    std::cout << "Column '" << name << "' added with type '"
+              << Column::typeToString(Column::typeFromString(typeStr)) << "'.\n";
 }
 
 void Table::exportToFile(const std::string& filename) const 
@@ -256,32 +279,30 @@ void Table::exportToFile(const std::string& filename) const
 
     for (std::size_t i = 0; i < columns.size(); ++i) 
     {
-        if (i > 0)
-            out << ";";  // За да може да се отваря правилно в ексел използвааме ";", вместо ","
-    
+        if (i > 0) out << ";";
         out << columns[i].getName();
     }
-    out << std::endl;
+    out << '\n';
 
-    for (std::size_t rowIndex = 0; rowIndex < rows.size(); ++rowIndex) 
+    for (const Row& row : rows) 
     {
-        const Row& row = rows[rowIndex];
-        const std::vector<Cell*>& cells = row.getCells();
-
-        for (std::size_t i = 0; i < cells.size(); ++i) 
+        for (std::size_t i = 0; i < row.size(); ++i) 
         {
-            if (i > 0)
-                out << ";";  // За да може да се отваря правилно в ексел използвааме ";", вместо ","
-            std::string value = cells[i]->toString();
-            if (cells[i]->getType() == CellType::STRING) 
-                out << "\"" << value << "\"";
-            else 
-                out << value;        
+            if (i > 0) 
+                out << ";";
+
+            const Cell* c = row.cellAt(i);
+            std::string value = c ? c->toString() : "NULL";
+
+            if (c && c->getType() == CellType::STRING)
+                out << '"' << value << '"';
+            else
+                out << value;
         }
-        out << std::endl;
+        out << '\n';
     }
     out.close();
-    std::cout << "Exported table '" << name << "' to file '" << filename << "'." << std::endl;
+    std::cout << "Exported table '" << name << "' to file '" << filename << "'.\n";
 }
 
 std::string Table::toLower(const std::string& str) 

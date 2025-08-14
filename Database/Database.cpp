@@ -3,6 +3,89 @@
 
 #include "Database.h"
 
+static inline bool is_space(unsigned char c) 
+{
+    return c==' ' || c=='\t' || c=='\r' || c=='\n' || c=='\f' || c=='\v';
+}
+
+static std::string trim_copy(const std::string& s) 
+{
+    std::size_t a = 0;
+    std::size_t b = s.size();
+    while (a < b && is_space((unsigned char)s[a])) ++a;
+    while (b > a && is_space((unsigned char)s[b - 1])) --b;
+    return s.substr(a, b - a);
+}
+
+static std::vector<std::string> split_ws_copy(const std::string& s) 
+{
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    const std::size_t n = s.size();
+    while (i < n) {
+        while (i < n && is_space((unsigned char)s[i])) 
+            ++i;
+        if (i >= n) 
+            break;
+        std::size_t j = i;
+        while (j < n && !is_space((unsigned char)s[j])) 
+            ++j;
+        out.push_back(s.substr(i, j - i));
+        i = j;
+    }
+    return out;
+}
+
+static std::vector<std::string> parse_values_line(const std::string& line) 
+{
+    std::vector<std::string> vals;
+    size_t i = 0, n = line.size();
+    while (i < n) 
+    {
+        while (i < n && is_space((unsigned char)line[i])) 
+            ++i;
+            
+        if (i >= n) 
+            break;
+
+        if (line[i] != '"') 
+        {
+            size_t j = i;
+            while (j < n && !is_space((unsigned char)line[j])) 
+                ++j;
+            vals.emplace_back(line.substr(i, j - i));
+            i = j;
+        } else 
+        {
+            ++i;
+            std::string out;
+            while (i < n) {
+                char c = line[i++];
+                if (c == '\\') 
+                {
+                    if (i < n) 
+                    {
+                        char d = line[i++];
+                        if (d == '"' || d == '\\') 
+                            out.push_back(d);
+                        else 
+                        { 
+                            out.push_back('\\'); 
+                            out.push_back(d); 
+                        }
+                    } else 
+                        out.push_back('\\');
+                } else if (c == '"') 
+                    break; 
+                else
+                    out.push_back(c);
+            }
+            vals.emplace_back(out);
+        }
+    }
+    return vals;
+}
+
 void Database::addTable(const Table& table) 
 {
     for (size_t i = 0; i < tables.size(); ++i) 
@@ -96,7 +179,7 @@ void Database::writeTableColumns(std::ofstream& out, const Table& table) const
     for (size_t i = 0; i < columns.size(); ++i) 
     {
         const Column& col = columns[i];
-        out << " " << col.getName() << ":" << col.getType();
+        out << " " << col.getName() << ":" << Column::typeToString(col.getType());
     }
     out << std::endl;
 }
@@ -115,70 +198,84 @@ void Database::writeTableRows(std::ofstream& out, const Table& table) const
 
 void Database::writeRowCells(std::ofstream& out, const Row& row) const
 {
-    const std::vector<Cell*>& cells = row.getCells();
-    for (size_t i = 0; i < cells.size(); ++i) 
-    {
-        const Cell* c = cells[i];
+    for (std::size_t i = 0; i < row.size(); ++i) {
+        const Cell* c = row.cellAt(i);
         out << " ";
-        if (c->getType() == CellType::STRING) 
-            out << "\"" << c->toString() << "\"";
+
+        if (!c) 
+        {                    
+            out << "NULL";
+            continue;
+        }
+
+        if (c->getType() == CellType::STRING)
+            out << '"' << c->toString() << '"';
         else
             out << c->toString();
     }
 }
 
-void Database::load(const std::string& filename) 
-{
-    std::ifstream file(filename);
-    if (!file)
-        throw std::runtime_error("Failed to open file!");
 
-    tables.clear();
-    Table* currentTable = nullptr;
+void Database::load(const std::string& filename) {
+    std::ifstream in(filename.c_str());
+    if (!in) throw std::runtime_error("Cannot open file for reading.");
 
-    char buff[1024];
+    clear();
 
-    while (file.getline(buff, sizeof(buff))) 
-    {
-        std::string line(buff);
-        std::istringstream iss(line);
-        std::string keyword;
-        iss >> keyword;
+    std::string line;
 
-        if (keyword == "TABLE") 
-        {
-            std::string tableName;
-            iss >> tableName;
-            currentTable = new Table(tableName);
-        }
-        else if (keyword == "COLUMNS" && currentTable) 
-        {
-            std::string nameAndType;
-            while (iss >> nameAndType) 
-            {
-                size_t sep = nameAndType.find(':');
-                std::string colName = nameAndType.substr(0, sep);
-                std::string colType = nameAndType.substr(sep + 1);
-                currentTable->addColumn(colName, colType);
-            }
-        }
-        else if (keyword == "ROW" && currentTable) 
-        {
-            std::vector<std::string> rawValues;
-            std::string value;
-            while (iss >> value) 
-            {
-                rawValues.push_back(value);
-            }
-            currentTable->insertRowFromStrings(rawValues);
-        }
-        else if (keyword == "END" && currentTable) 
-        {
-            tables.push_back(*currentTable);
-            delete currentTable;
-            currentTable = nullptr;
-        }
+    // ---- line 1: table name (or "TABLE <name>") ----
+    if (!std::getline(in, line))
+        throw std::runtime_error("Invalid file: missing table name.");
+
+    std::string firstLine = trim_copy(line);
+    std::vector<std::string> first = split_ws_copy(firstLine);
+    if (first.empty())
+        throw std::runtime_error("Invalid file: empty table name line.");
+
+    std::string tableName;
+    if (first.size() >= 2 && first[0] == "TABLE")
+        tableName = first[1];
+    else
+        tableName = first[0];
+
+    // ---- line 2: schema (optionally starts with "COLUMNS") ----
+    if (!std::getline(in, line))
+        throw std::runtime_error("Invalid file: missing schema line.");
+
+    std::string schemaLine = trim_copy(line);
+    std::vector<std::string> schemaTokens = split_ws_copy(schemaLine);
+    if (schemaTokens.empty())
+        throw std::runtime_error("Invalid file: empty schema line.");
+
+    std::size_t startIndex = 0;
+    if (schemaTokens[0] == "COLUMNS") startIndex = 1;
+
+    Table t(tableName);
+
+    for (std::size_t k = startIndex; k < schemaTokens.size(); ++k) {
+        const std::string& tok = schemaTokens[k];
+        std::size_t p = tok.find(':');
+        if (p == std::string::npos)
+            throw std::runtime_error("Invalid schema token: " + tok);
+        std::string colName = tok.substr(0, p);
+        std::string colType = tok.substr(p + 1);
+        t.addColumn(colName, colType);
     }
 
-    std::cout << "Database loaded from " << filename << std::endl;
+    // ---- remaining lines: rows (skip blank and optional "ROWS") ----
+    while (std::getline(in, line)) {
+        std::string trimmed = trim_copy(line);
+        if (trimmed.empty()) continue;
+        if (trimmed == "ROWS") continue;
+
+        std::vector<std::string> values = parse_values_line(trimmed);
+
+        if (values.size() != t.getColumnCount())
+            throw std::runtime_error("Row has wrong number of fields.");
+
+        t.insertRowFromStrings(values);
+    }
+
+    addTable(t);
 }

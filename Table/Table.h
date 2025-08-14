@@ -24,12 +24,16 @@ public:
 
     void insertRow(const std::vector<Cell*>& data);
     void insertRowFromStrings(const std::vector<std::string>& values);
-    void select(size_t columnIndex, const std::string& value) const;
-    void modifyColumn(size_t columnIndex, const std::string& newType);
+    void select(size_t columnIndex, const std::string& value,
+                size_t limit, size_t offset) const;
+    void modifyColumn(std::size_t columnIndex, CellType newType);               
+    void modifyColumn(std::size_t columnIndex, const std::string& newTypeStr);   
     void addColumn(const std::string& name, const std::string& type);
     void update(size_t searchCol, const std::string& searchVal,
                 size_t targetCol, const std::string& newVal);
     void deleteRows(size_t columnIndex, const std::string& value);
+
+    std::size_t getColumnCount() const noexcept {return columns.size();};  
 
 private:
     std::string name;
