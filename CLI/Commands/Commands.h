@@ -23,6 +23,8 @@ struct PrintCmd : ICommand {
     void execute(Context& ctx, const std::vector<std::string>& args) override;
 };
 
+// --- file commands ---
+
 struct OpenCmd : ICommand {
     const char* name() const override { return "open"; }
     const char* help() const override { return "open <file> - Open a database file"; }

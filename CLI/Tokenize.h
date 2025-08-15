@@ -13,7 +13,8 @@ inline std::vector<std::string> tokenize(const std::string& line)
     std::size_t i = 0;
     const std::size_t n = line.size();
 
-    while (i < n) {
+    while (i < n) 
+    {
         while (i < n && is_space_char(static_cast<unsigned char>(line[i]))) 
             ++i;
         if (i >= n) 

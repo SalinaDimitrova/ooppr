@@ -12,8 +12,11 @@ static std::string trim_copy(const std::string& s)
 {
     std::size_t a = 0;
     std::size_t b = s.size();
-    while (a < b && is_space((unsigned char)s[a])) ++a;
-    while (b > a && is_space((unsigned char)s[b - 1])) --b;
+    while (a < b && is_space((unsigned char)s[a])) 
+        ++a;
+    while (b > a && is_space((unsigned char)s[b - 1])) 
+        --b;
+
     return s.substr(a, b - a);
 }
 
@@ -22,7 +25,8 @@ static std::vector<std::string> split_ws_copy(const std::string& s)
     std::vector<std::string> out;
     std::size_t i = 0;
     const std::size_t n = s.size();
-    while (i < n) {
+    while (i < n) 
+    {
         while (i < n && is_space((unsigned char)s[i])) 
             ++i;
         if (i >= n) 
@@ -198,84 +202,110 @@ void Database::writeTableRows(std::ofstream& out, const Table& table) const
 
 void Database::writeRowCells(std::ofstream& out, const Row& row) const
 {
-    for (std::size_t i = 0; i < row.size(); ++i) {
+    std::string (*escape)(const std::string&) =
+        [](const std::string& s) -> std::string 
+        {
+            std::string r;
+            r.reserve(s.size());
+            for (char ch : s) 
+            {
+                if (ch == '"' || ch == '\\') r.push_back('\\');
+                r.push_back(ch);
+            }
+            return r;
+        };
+
+    for (std::size_t i = 0; i < row.size(); ++i) 
+    {
         const Cell* c = row.cellAt(i);
         out << " ";
 
         if (!c) 
-        {                    
+        {
             out << "NULL";
             continue;
         }
 
         if (c->getType() == CellType::STRING)
-            out << '"' << c->toString() << '"';
+            out << '"' << escape(c->toString()) << '"';
         else
             out << c->toString();
     }
 }
-
 
 void Database::load(const std::string& filename) {
     std::ifstream in(filename.c_str());
     if (!in) throw std::runtime_error("Cannot open file for reading.");
 
     clear();
-
     std::string line;
 
-    // ---- line 1: table name (or "TABLE <name>") ----
-    if (!std::getline(in, line))
-        throw std::runtime_error("Invalid file: missing table name.");
+    while (true) {
+        std::string firstLine;
+        while (std::getline(in, line)) {
+            firstLine = trim_copy(line);
+            if (!firstLine.empty()) break;
+        }
+        if (!in) break; 
 
-    std::string firstLine = trim_copy(line);
-    std::vector<std::string> first = split_ws_copy(firstLine);
-    if (first.empty())
-        throw std::runtime_error("Invalid file: empty table name line.");
+        std::vector<std::string> first = split_ws_copy(firstLine);
+        if (first.empty()) continue;
 
-    std::string tableName;
-    if (first.size() >= 2 && first[0] == "TABLE")
-        tableName = first[1];
-    else
-        tableName = first[0];
+        std::string tableName;
+        if (first.size() >= 2 && first[0] == "TABLE")
+            tableName = first[1];
+        else if (first.size() == 1)
+            tableName = first[0];
+        else
+            throw std::runtime_error("Invalid table header: " + firstLine);
 
-    // ---- line 2: schema (optionally starts with "COLUMNS") ----
-    if (!std::getline(in, line))
-        throw std::runtime_error("Invalid file: missing schema line.");
+        if (!std::getline(in, line))
+            throw std::runtime_error("Invalid file: missing schema line for table '" + tableName + "'.");
 
-    std::string schemaLine = trim_copy(line);
-    std::vector<std::string> schemaTokens = split_ws_copy(schemaLine);
-    if (schemaTokens.empty())
-        throw std::runtime_error("Invalid file: empty schema line.");
+        std::string schemaLine = trim_copy(line);
+        if (schemaLine.empty())
+            throw std::runtime_error("Invalid file: empty schema line for table '" + tableName + "'.");
 
-    std::size_t startIndex = 0;
-    if (schemaTokens[0] == "COLUMNS") startIndex = 1;
+        std::vector<std::string> schemaTokens = split_ws_copy(schemaLine);
+        std::size_t startIndex = 0;
+        if (!schemaTokens.empty() && schemaTokens[0] == "COLUMNS") 
+            startIndex = 1;
 
-    Table t(tableName);
+        Table t(tableName);
+        for (std::size_t k = startIndex; k < schemaTokens.size(); ++k) 
+        {
+            const std::string& tok = schemaTokens[k];
+            std::size_t p = tok.find(':');
+            if (p == std::string::npos)
+                throw std::runtime_error("Invalid schema token: " + tok);
+            t.addColumn(tok.substr(0, p), tok.substr(p + 1));
+        }
 
-    for (std::size_t k = startIndex; k < schemaTokens.size(); ++k) {
-        const std::string& tok = schemaTokens[k];
-        std::size_t p = tok.find(':');
-        if (p == std::string::npos)
-            throw std::runtime_error("Invalid schema token: " + tok);
-        std::string colName = tok.substr(0, p);
-        std::string colType = tok.substr(p + 1);
-        t.addColumn(colName, colType);
+        while (std::getline(in, line)) 
+        {
+            std::string trimmed = trim_copy(line);
+            if (trimmed.empty() || trimmed == "ROWS") 
+                continue;
+            if (trimmed == "END") 
+                break; 
+
+            std::string rowText = trimmed;
+            if (trimmed.rfind("ROW", 0) == 0) 
+            {
+                rowText = trim_copy(trimmed.substr(3));
+                if (rowText.empty()) 
+                    continue; 
+            }
+
+            std::vector<std::string> values = parse_values_line(rowText);
+            if (values.size() != t.getColumnCount())
+                throw std::runtime_error("Row has wrong number of fields in table '" + tableName + "'.");
+            t.insertRowFromStrings(values);
+        }
+
+        addTable(t);
+
+        if (!in) 
+            break;
     }
-
-    // ---- remaining lines: rows (skip blank and optional "ROWS") ----
-    while (std::getline(in, line)) {
-        std::string trimmed = trim_copy(line);
-        if (trimmed.empty()) continue;
-        if (trimmed == "ROWS") continue;
-
-        std::vector<std::string> values = parse_values_line(trimmed);
-
-        if (values.size() != t.getColumnCount())
-            throw std::runtime_error("Row has wrong number of fields.");
-
-        t.insertRowFromStrings(values);
-    }
-
-    addTable(t);
 }

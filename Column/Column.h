@@ -15,7 +15,7 @@ public:
     const std::string& getName() const { return name; }
     CellType getType() const { return type; }
 
-    static CellType typeFromString(const std::string& s); // "int" -> CellType::INT
+    static CellType typeFromString(const std::string& s); 
     static const char* typeToString(CellType t);   
 
     bool operator==(const Column& rhs) const;

@@ -1,6 +1,6 @@
 #include "Database/Database.h"
 #include "CLI/Context.h"
-#include "CLI/CommandBus.h"
+#include "CLI/CommandBus/CommandBus.h"
 #include "CLI/CommandFactory.h"
 
 int main() {

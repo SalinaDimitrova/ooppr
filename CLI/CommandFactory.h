@@ -1,9 +1,11 @@
 #pragma once
-#include "CommandBus.h"
+#include "CommandBus/CommandBus.h"
 #include "Commands/Commands.h"
 
-struct CommandFactory {
-    static void registerDefaultCommands(CommandBus& bus) {
+struct CommandFactory 
+{
+    static void registerDefaultCommands(CommandBus& bus) 
+    {
         bus.emplace<OpenCmd>();
         bus.emplace<CloseCmd>();
         bus.emplace<SaveCmd>();
